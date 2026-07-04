@@ -7,26 +7,24 @@ payload (raw chunk keeps its audio for optional STT).
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 from .models import Chunk
-
-FFMPEG = "ffmpeg"
-FFPROBE = "ffprobe"
+from .ffmpeg import (
+    has_ffmpeg,
+    probe_duration as ffmpeg_probe_duration,
+    extract_segment,
+    extract_proxy,
+    extract_frame,
+)
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 
 def check_ffmpeg() -> bool:
     """Return whether both ``ffmpeg`` and ``ffprobe`` are available."""
-    return shutil.which(FFMPEG) is not None and shutil.which(FFPROBE) is not None
-
-
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
+    return has_ffmpeg()
 
 
 def probe_duration(path: Path) -> float:
@@ -37,22 +35,7 @@ def probe_duration(path: Path) -> float:
     path
         Video file to inspect.
     """
-    r = _run(
-        [
-            FFPROBE,
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ]
-    )
-    try:
-        return float(r.stdout.strip())
-    except ValueError:
-        return 0.0
+    return ffmpeg_probe_duration(path)
 
 
 def chunk_spans(
@@ -107,76 +90,25 @@ def extract_chunk(source: Path, start: float, end: float, workdir: Path) -> Chun
     workdir.mkdir(parents=True, exist_ok=True)
     dur = end - start
     raw = workdir / f"raw_{start:.0f}.mp4"
-    r = _run(
-        [
-            FFMPEG,
-            "-y",
-            "-v",
-            "error",
-            "-ss",
-            f"{start:.2f}",
-            "-t",
-            f"{dur:.2f}",
-            "-i",
-            str(source),
-            "-c",
-            "copy",
-            "-avoid_negative_ts",
-            "make_zero",
-            str(raw),
-        ]
+
+    # Attempt fast stream-copy first (reencode=False) and fall back to re-encoding
+    success = extract_segment(
+        source,
+        start=start,
+        duration=dur,
+        dest=raw,
+        reencode=False,
+        with_audio=True,
+        reset_timestamps=False,
     )
-    if r.returncode != 0 or not raw.exists() or raw.stat().st_size == 0:
-        # Stream-copy fails on some GOP boundaries — re-encode fallback.
-        r = _run(
-            [
-                FFMPEG,
-                "-y",
-                "-v",
-                "error",
-                "-ss",
-                f"{start:.2f}",
-                "-t",
-                f"{dur:.2f}",
-                "-i",
-                str(source),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                "23",
-                "-c:a",
-                "aac",
-                str(raw),
-            ]
-        )
-        if r.returncode != 0 or not raw.exists() or raw.stat().st_size == 0:
-            return None
+    if not success or not raw.exists() or raw.stat().st_size == 0:
+        return None
 
     proxy = workdir / f"proxy_{start:.0f}.mp4"
-    r = _run(
-        [
-            FFMPEG,
-            "-y",
-            "-v",
-            "error",
-            "-i",
-            str(raw),
-            "-vf",
-            "scale=-2:480,fps=5",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "28",
-            "-an",
-            str(proxy),
-        ]
-    )
-    if r.returncode != 0 or not proxy.exists() or proxy.stat().st_size == 0:
+    success = extract_proxy(raw, proxy, width=-2, height=480, fps=5)
+    if not success or not proxy.exists() or proxy.stat().st_size == 0:
         return None
+
     return Chunk(source=source, start=start, end=end, raw=raw, proxy=proxy)
 
 
@@ -194,25 +126,10 @@ def is_still_chunk(chunk: Chunk, threshold: float = 0.98) -> bool:
     with tempfile.TemporaryDirectory() as td:
         for i, frac in enumerate((0.1, 0.5, 0.9)):
             out = Path(td) / f"f{i}.jpg"
-            _run(
-                [
-                    FFMPEG,
-                    "-y",
-                    "-v",
-                    "error",
-                    "-ss",
-                    f"{chunk.duration * frac:.2f}",
-                    "-i",
-                    str(chunk.proxy),
-                    "-frames:v",
-                    "1",
-                    "-q:v",
-                    "5",
-                    str(out),
-                ]
-            )
-            if out.exists():
+            success = extract_frame(chunk.proxy, chunk.duration * frac, out)
+            if success and out.exists():
                 sizes.append(out.stat().st_size)
+
     if len(sizes) < 3 or min(sizes) == 0:
         return False
     return (min(sizes) / max(sizes)) >= threshold
