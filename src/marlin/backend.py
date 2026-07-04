@@ -35,18 +35,16 @@ from .contract import (
 )
 from .logging import get_logger
 from .models import Config
-from .video_processor import CHUNK_SECONDS, OVERLAP_SECONDS
+from .constants import (
+    CHUNK_SECONDS,
+    OVERLAP_SECONDS,
+    VIDEO_MAX_PIXELS,
+    VIDEO_FPS,
+    FACTOR,
+    MIME_TYPES,
+)
 
 logger = get_logger("backend")
-
-_MIME = {
-    ".mp4": "video/mp4",
-    ".mov": "video/quicktime",
-    ".mkv": "video/x-matroska",
-    ".webm": "video/webm",
-    ".avi": "video/x-msvideo",
-    ".m4v": "video/x-m4v",
-}
 
 
 def probe(base_url: str, api_key: str = "", timeout: float = 3.0) -> bool:
@@ -76,7 +74,7 @@ def probe(base_url: str, api_key: str = "", timeout: float = 3.0) -> bool:
 
 
 def _video_part(path: Path) -> dict:
-    mime = _MIME.get(path.suffix.lower(), "video/mp4")
+    mime = MIME_TYPES.get(path.suffix.lower(), "video/mp4")
     b64 = base64.b64encode(path.read_bytes()).decode()
     return {"type": "video_url", "video_url": {"url": f"data:{mime};base64,{b64}"}}
 
@@ -86,9 +84,7 @@ def _video_part(path: Path) -> dict:
 # after decoding full-res frames — so we downscale on the client to the same
 # target first: same frames the model would see, far cheaper to decode + much
 # less memory (a 4K decode is the thing that OOMs weak machines).
-VIDEO_MAX_PIXELS = 200704
-VIDEO_FPS = 2.0
-_FACTOR = 32
+_FACTOR = FACTOR
 
 
 def _have_ffmpeg() -> bool:

@@ -1,6 +1,6 @@
 """Pydantic models used by Marlin."""
 
-from .config import Config, LoggingConfig
+from marlin.config import Config, LoggingConfig
 from .media import Chunk, Event
 from .search import Hit, IndexStats
 

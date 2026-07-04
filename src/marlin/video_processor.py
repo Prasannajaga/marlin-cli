@@ -32,16 +32,13 @@ logger = get_logger("chunk")
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-# 30s/5s matches Config.chunk_seconds/chunk_overlap and the existing chunker.py.
-# It is a correctness requirement, not just a cost choice: vLLM's Qwen3-VL path
-# compresses timestamps on long clips (vllm#30847), so chunks must stay <=30s to
-# ground inside the model's training distribution. See backend.py module docstring.
-CHUNK_SECONDS = 30.0
-OVERLAP_SECONDS = 5.0
-DEDUP_TOLERANCE_SECONDS = 5.0
-DEDUP_IOU_THRESHOLD = 0.5
-# Fold a trailing chunk shorter than this into its predecessor.
-MIN_CHUNK_SECONDS = 2.0
+from .constants import (
+    CHUNK_SECONDS,
+    OVERLAP_SECONDS,
+    DEDUP_TOLERANCE_SECONDS,
+    DEDUP_IOU_THRESHOLD,
+    MIN_CHUNK_SECONDS,
+)
 
 
 # ── exceptions ────────────────────────────────────────────────────────────────
