@@ -25,8 +25,8 @@ from marlin.video_processor import (  # noqa: E402
     extract_chunk,
     find_in_long_video,
     generate_chunks,
-    probe_duration_seconds,
 )
+from marlin.ffmpeg import probe_duration
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixtures import have_ffmpeg, make_sample_video  # noqa: E402
@@ -112,7 +112,7 @@ def test_find_maps_local_to_global_timestamps():
     video = _real_temp_video()
     ground = MagicMock(side_effect=[((10.0, 20.0), "from_pair"), ((15.0, 25.0), "from_pair")])
     with (
-        patch("marlin.video_processor.probe_duration_seconds", return_value=210.0),
+        patch("marlin.ffmpeg.probe_duration", return_value=210.0),
         patch("marlin.video_processor.extract_chunk", side_effect=_fake_extract) as mx,
     ):
         res = find_in_long_video(
@@ -129,7 +129,7 @@ def test_find_skips_no_match_and_clamps_empty():
     # chunk0: span runs off the end -> clamps to chunk.duration; chunk1: no_match.
     ground = MagicMock(side_effect=[((5.0, 999.0), "from_pair"), ((0.0, 0.0), "no_match")])
     with (
-        patch("marlin.video_processor.probe_duration_seconds", return_value=210.0),
+        patch("marlin.ffmpeg.probe_duration", return_value=210.0),
         patch("marlin.video_processor.extract_chunk", side_effect=_fake_extract),
     ):
         res = find_in_long_video(video, "q", ground, chunk_seconds=120.0, overlap_seconds=30.0)
@@ -141,7 +141,7 @@ def test_find_raises_when_all_chunks_fail():
     video = _real_temp_video()
     ground = MagicMock(side_effect=RuntimeError("model down"))
     with (
-        patch("marlin.video_processor.probe_duration_seconds", return_value=210.0),
+        patch("marlin.ffmpeg.probe_duration", return_value=210.0),
         patch("marlin.video_processor.extract_chunk", side_effect=_fake_extract),
     ):
         try:
@@ -172,7 +172,7 @@ def test_extract_chunk_real_ffmpeg_is_duration_accurate():
         c = chunks[1]
         extract_chunk(src, c, Path(td) / "chunks")
         assert c.path is not None and c.path.exists() and c.path.stat().st_size > 0
-        got = probe_duration_seconds(c.path)
+        got = probe_duration(c.path)
         # Frame-accurate re-encode: extracted duration tracks the planned window.
         assert abs(got - c.duration) < 0.5, f"chunk dur {got} vs planned {c.duration}"
 

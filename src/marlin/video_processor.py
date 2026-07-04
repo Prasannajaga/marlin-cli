@@ -5,20 +5,17 @@ no CLI. Splits a video into overlapping chunks, calls a user-supplied
 ground_fn on each, normalises local timestamps to global, deduplicates
 overlap events, and returns the combined result in memory.
 
-Usage from cli.py::
+    from marlin.ffmpeg import probe_duration
+    from .video_processor import find_in_long_video
 
-    from .video_processor import probe_duration_seconds, find_in_long_video
-
-    duration = probe_duration_seconds(path)
+    duration = probe_duration(path)
     if duration > 30.0:
         result = find_in_long_video(path, query, m.ground)
 """
 
 from __future__ import annotations
 
-import json
 import shutil
-import subprocess
 import tempfile
 import time
 from collections.abc import Callable
@@ -38,6 +35,8 @@ from .constants import (
     DEDUP_TOLERANCE_SECONDS,
     DEDUP_IOU_THRESHOLD,
     MIN_CHUNK_SECONDS,
+    VIDEO_MAX_PIXELS,
+    VIDEO_FPS,
 )
 
 
@@ -102,33 +101,6 @@ def _fmt_time(seconds: float) -> str:
 # ── phase 1: probe & plan ────────────────────────────────────────────────────
 
 
-def probe_duration_seconds(video_path: str | Path) -> float:
-    """Return video duration in seconds via ffprobe."""
-    video_path = Path(video_path)
-    if not video_path.exists():
-        raise VideoChunkingError(f"Video file not found: {video_path}")
-
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "json",
-        str(video_path),
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    if proc.returncode != 0:
-        raise FFmpegError(f"ffprobe failed: {proc.stderr.strip()}")
-
-    try:
-        data = json.loads(proc.stdout)
-        return float(data["format"]["duration"])
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-        raise FFmpegError(f"Could not parse ffprobe output: {exc}") from exc
-
-
 def generate_chunks(
     duration_seconds: float,
     chunk_seconds: float = CHUNK_SECONDS,
@@ -187,11 +159,10 @@ def extract_chunk(
 ) -> VideoChunk:
     """Extract a single chunk from the source video via FFmpeg.
 
-    Re-encodes (does NOT stream-copy). With ``-ss`` before ``-i`` a re-encode is
-    both fast (keyframe pre-seek) and frame-accurate: the first output frame is
-    exactly at ``chunk.start``. Stream-copy (``-c copy``) snaps to the previous
-    keyframe and would shift every global timestamp late by up to one GOP, which
-    silently corrupts grounding results — the whole point of ``find``.
+    Re-encodes (does NOT stream-copy) to guarantee frame-accuracy. To optimize
+    performance and avoid redundant transcoding passes, this also performs
+    client-side downscaling (resolution and frame rate) to the model's target
+    budget during the extraction step.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -200,40 +171,33 @@ def extract_chunk(
     filename = f"chunk_{chunk.chunk_id:04d}_{start_ms}_{end_ms}.mp4"
     output_path = output_dir / filename
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-nostdin",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        str(chunk.start),
-        "-i",
-        str(input_video),
-        "-t",
-        str(chunk.duration),
-        "-map",
-        "0:v:0",
-        "-an",  # grounding is video-only; dropping audio speeds the re-encode
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-pix_fmt",
-        "yuv420p",
-        "-reset_timestamps",
-        "1",
-        str(output_path),
-    ]
+    from .ffmpeg import extract_segment, probe_dimensions, calculate_target_resolution
+
+    # Retrieve source dimensions to calculate target budget
+    dims = probe_dimensions(input_video)
+    width, height = None, None
+    if dims:
+        w, h = dims
+        tgt = calculate_target_resolution(w, h, max_pixels=VIDEO_MAX_PIXELS)
+        if tgt:
+            width, height = tgt
 
     t0 = time.monotonic()
-    proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    success = extract_segment(
+        input_video,
+        start=chunk.start,
+        duration=chunk.duration,
+        dest=output_path,
+        reencode=True,
+        with_audio=False,
+        reset_timestamps=True,
+        width=width,
+        height=height,
+        fps=VIDEO_FPS,
+    )
     elapsed = time.monotonic() - t0
-    if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-        raise FFmpegError(f"FFmpeg failed for chunk {chunk.chunk_id}: {proc.stderr.strip()}")
+    if not success or not output_path.exists() or output_path.stat().st_size == 0:
+        raise FFmpegError(f"FFmpeg failed for chunk {chunk.chunk_id}")
 
     chunk.path = output_path
     logger.debug("extracted chunk {} in {:.1f}s", chunk.chunk_id, elapsed)
@@ -338,7 +302,10 @@ def find_in_long_video(
     if not video_path.exists():
         raise VideoChunkingError(f"Video file not found: {video_path}")
 
-    duration = probe_duration_seconds(video_path)
+    from .ffmpeg import probe_duration
+    duration = probe_duration(video_path)
+    if duration == 0.0:
+        raise VideoChunkingError(f"Could not probe duration for: {video_path}")
     chunks = generate_chunks(duration, chunk_seconds, overlap_seconds)
     total = len(chunks)
 

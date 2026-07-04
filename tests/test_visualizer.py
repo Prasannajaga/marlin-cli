@@ -26,7 +26,7 @@ def test_visualizer_defaults():
 
     with (
         patch("webbrowser.open") as mock_open,
-        patch("marlin.video_processor.probe_duration_seconds", return_value=15.0),
+        patch("marlin.ffmpeg.probe_duration", return_value=15.0),
         patch("marlin.output.is_json", return_value=True),
         tempfile.TemporaryDirectory() as td,
     ):
@@ -62,7 +62,7 @@ def test_visualizer_fallback_duration():
     with (
         patch("webbrowser.open"),
         patch(
-            "marlin.video_processor.probe_duration_seconds",
+            "marlin.ffmpeg.probe_duration",
             side_effect=Exception("Probe failed"),
         ),
         patch("marlin.output.is_json", return_value=True),
@@ -88,7 +88,7 @@ def test_visualizer_escapes_script_breakout():
     """A query containing </script> must not break out of the data <script>."""
     with (
         patch("webbrowser.open"),
-        patch("marlin.video_processor.probe_duration_seconds", return_value=10.0),
+        patch("marlin.ffmpeg.probe_duration", return_value=10.0),
         patch("marlin.output.is_json", return_value=True),
         tempfile.TemporaryDirectory() as td,
     ):

@@ -26,9 +26,11 @@ def generate_and_open(
     """Generate the HTML visualizer dashboard and open it in a browser."""
     if duration is None:
         try:
-            from .video_processor import probe_duration_seconds
+            from .ffmpeg import probe_duration
 
-            duration = probe_duration_seconds(video_path)
+            duration = probe_duration(video_path)
+            if duration == 0.0:
+                raise ValueError("duration is 0.0")
         except Exception:
             max_end = 0.0
             for e in events:

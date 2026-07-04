@@ -242,12 +242,15 @@ class Marlin:
         )
 
     def _ask(self, video: Path, prompt: str, max_tokens: int = 1024) -> str:
-        send, note = (
-            (video, None) if self.full_res else downscale_proxy(video, self.max_pixels, self.fps)
-        )
-        self.last_note = note
-        if note:
-            logger.info("using downscaled video proxy: {}", note)
+        # send, note = (
+        #     (video, None) if self.full_res else downscale_proxy(video, self.max_pixels, self.fps)
+        # )
+        # self.last_note = note
+        # if note:
+        #     logger.info("using downscaled video proxy: {}", note)
+        send = video
+        note = None
+        self.last_note = None
         try:
             resp = self.client.chat.completions.create(
                 model=self.cfg.model,
@@ -349,11 +352,11 @@ class Marlin:
         from .video_processor import (
             find_in_long_video,
             hits_to_visualizer_events,
-            probe_duration_seconds,
         )
+        from .ffmpeg import probe_duration
 
         try:
-            duration = probe_duration_seconds(video)
+            duration = probe_duration(video)
         except Exception:
             duration = None
 
